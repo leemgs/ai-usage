@@ -1,3 +1,5 @@
+import { usagePercent, validateUsage } from "./usage-core.js";
+
 const providers = [
   { id: "claude", name: "Claude", short: "AI", color: "#d97757" },
   { id: "gemini", name: "Gemini", short: "G", color: "#4285f4" },
@@ -52,12 +54,12 @@ function formatDate(value) {
 
 function usageState(data) {
   const metrics = data.metrics.map((metric) => {
-    const percent = metric.limit > 0 ? Math.min(100, Math.round((metric.used / metric.limit) * 100)) : null;
+    const percent = usagePercent(metric.used, metric.limit);
     const display = percent === null ? `${metric.used}` : `${metric.used} / ${metric.limit}`;
     return `<div class="metric"><div class="metric-labels"><span class="metric-name">${escapeHtml(metric.label)}</span><span class="metric-numbers"><strong>${escapeHtml(display)}</strong>${percent === null ? "회" : ` (${percent}%)`}</span></div>
       <div class="progress" role="progressbar" aria-label="${escapeHtml(metric.label)}" aria-valuemin="0" aria-valuemax="${metric.limit || metric.used}" aria-valuenow="${metric.used}"><div class="progress-fill" style="width:${percent ?? 100}%"></div></div></div>`;
   }).join("");
-  return `<div class="account-row"><span>계정</span><strong>${escapeHtml(data.account || "확인되지 않음")}</strong></div>${metrics}<div class="reset-note"><span aria-hidden="true">◷</span><div><small>다음 사용량 재설정</small><strong>${escapeHtml(formatDate(data.resetAt))}</strong></div></div>`;
+  return `<div class="account-row"><div><span>계정</span><strong>${escapeHtml(data.account || "확인되지 않음")}</strong></div><div class="account-updated"><span>API 기준 시각</span><strong>${escapeHtml(formatDate(data.updatedAt))}</strong></div></div>${metrics}<div class="reset-note"><span aria-hidden="true">◷</span><div><small>다음 사용량 재설정</small><strong>${escapeHtml(formatDate(data.resetAt))}</strong></div></div>`;
 }
 
 function renderProvider() {
@@ -74,14 +76,6 @@ function renderProvider() {
   elements.content.innerHTML = data ? usageState(data) : emptyState(provider);
   $("#openConnect")?.addEventListener("click", openDialog);
   renderNav();
-}
-
-function validateUsage(payload) {
-  if (!payload || !Array.isArray(payload.metrics) || payload.metrics.length === 0) throw new Error("metrics 배열이 없는 응답입니다.");
-  payload.metrics.forEach((metric) => {
-    if (typeof metric.label !== "string" || typeof metric.used !== "number" || (metric.limit != null && typeof metric.limit !== "number")) throw new Error("사용량 항목의 형식이 올바르지 않습니다.");
-  });
-  return payload;
 }
 
 async function fetchUsage(provider, connection, token = tokens.get(provider.id)) {
@@ -140,3 +134,8 @@ elements.theme.addEventListener("click", () => { document.body.classList.toggle(
 
 renderProvider();
 refreshAll();
+
+const refreshInterval = window.setInterval(() => {
+  if (document.visibilityState === "visible") refreshAll();
+}, 60_000);
+window.addEventListener("pagehide", () => window.clearInterval(refreshInterval), { once: true });

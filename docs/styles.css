@@ -38,7 +38,7 @@ main { padding:8px 20px; }
 .primary-button,.secondary-button { min-height:43px; padding:0 18px; border-radius:13px; font-weight:700; }
 .primary-button { border:0; background:var(--brand); color:white; box-shadow:0 8px 18px rgba(102,88,223,.2); }.primary-button:disabled { opacity:.6; }
 .secondary-button { border:1px solid var(--line); background:var(--surface); }
-.account-row { margin:-5px 0 21px; padding:12px 13px; border-radius:12px; background:var(--bg); font-size:12px; }.account-row span { color:var(--muted); }
+.account-row { margin:-5px 0 21px; padding:12px 13px; border-radius:12px; background:var(--bg); font-size:12px; }.account-row>div { display:flex; flex-direction:column; gap:3px; }.account-row span { color:var(--muted); font-size:9px; }.account-updated { align-items:flex-end; text-align:right; }.account-updated strong { font-size:10px; }
 .metric+.metric { margin-top:21px; }.metric-labels { margin-bottom:9px; }.metric-name { font-size:13px; font-weight:680; }.metric-numbers { color:var(--muted); font-size:10px; }.metric-numbers strong { margin-right:3px; color:var(--text); font-size:12px; }
 .progress { height:7px; overflow:hidden; border-radius:20px; background:var(--track); }.progress-fill { height:100%; border-radius:inherit; background:linear-gradient(90deg,var(--brand),#978af5); transition:width .5s; }
 .reset-note { gap:10px; margin-top:23px; padding-top:17px; border-top:1px solid var(--line); }.reset-note>span { color:var(--muted); font-size:20px; }.reset-note small,.reset-note strong { display:block; }.reset-note small { color:var(--muted); font-size:10px; }.reset-note strong { margin-top:3px; font-size:12px; }
