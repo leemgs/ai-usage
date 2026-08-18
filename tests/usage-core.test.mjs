@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { usagePercent, validateUsage } from "../docs/usage-core.js";
+import { isSecureEndpoint, readConnections, usagePercent, validateUsage } from "../docs/usage-core.js";
 
 const validPayload = {
   account: "mobile-user",
@@ -27,4 +27,18 @@ test("사용률을 계산하고 100%에서 제한한다", () => {
   assert.equal(usagePercent(12, 300), 4);
   assert.equal(usagePercent(500, 300), 100);
   assert.equal(usagePercent(1, undefined), null);
+});
+
+test("안전한 API 주소만 허용한다", () => {
+  assert.equal(isSecureEndpoint("https://usage.example.com/api"), true);
+  assert.equal(isSecureEndpoint("http://usage.example.com/api"), false);
+  assert.equal(isSecureEndpoint("http://localhost:3000/api", "localhost"), true);
+  assert.equal(isSecureEndpoint("http://localhost:3000/api", "leemgs.github.io"), false);
+  assert.equal(isSecureEndpoint("not-a-url"), false);
+});
+
+test("손상되거나 위험한 저장 설정을 안전하게 제거한다", () => {
+  assert.deepEqual(readConnections("not-json"), {});
+  assert.deepEqual(readConnections("[]"), {});
+  assert.deepEqual(readConnections(JSON.stringify({ copilot: { endpoint: "http://unsafe.example/api" }, codex: { endpoint: "https://safe.example/api" } })), { codex: { endpoint: "https://safe.example/api" } });
 });

@@ -19,3 +19,23 @@ export function usagePercent(used, limit) {
   if (!Number.isFinite(limit) || limit <= 0) return null;
   return Math.min(100, Math.max(0, Math.round((used / limit) * 100)));
 }
+
+export function isSecureEndpoint(value, pageHostname = "") {
+  try {
+    const url = new URL(value);
+    if (url.protocol === "https:") return true;
+    return url.protocol === "http:" && ["localhost", "127.0.0.1", "::1"].includes(url.hostname) && ["localhost", "127.0.0.1", "::1"].includes(pageHostname);
+  } catch {
+    return false;
+  }
+}
+
+export function readConnections(serialized) {
+  try {
+    const parsed = JSON.parse(serialized || "{}");
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    return Object.fromEntries(Object.entries(parsed).filter(([, connection]) => connection && typeof connection.endpoint === "string" && isSecureEndpoint(connection.endpoint)));
+  } catch {
+    return {};
+  }
+}

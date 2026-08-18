@@ -1,4 +1,4 @@
-import { usagePercent, validateUsage } from "./usage-core.js";
+import { isSecureEndpoint, readConnections, usagePercent, validateUsage } from "./usage-core.js";
 
 const providers = [
   { id: "claude", name: "Claude", short: "AI", color: "#d97757" },
@@ -9,10 +9,11 @@ const providers = [
 ];
 
 const storageKey = "aiUsageConnectionsV2";
-const connections = JSON.parse(localStorage.getItem(storageKey) || "{}");
+const connections = readConnections(localStorage.getItem(storageKey));
 const tokens = new Map();
 const usage = new Map();
 let active = Math.max(0, providers.findIndex(({ id }) => id === (localStorage.getItem("activeProvider") || "copilot")));
+let refreshPromise = null;
 
 const $ = (selector) => document.querySelector(selector);
 const elements = {
@@ -81,20 +82,38 @@ function renderProvider() {
 async function fetchUsage(provider, connection, token = tokens.get(provider.id)) {
   const headers = { Accept: "application/json" };
   if (token) headers.Authorization = `Bearer ${token}`;
-  const response = await fetch(connection.endpoint, { headers, cache: "no-store" });
-  if (!response.ok) throw new Error(`Usage API 오류 (${response.status})`);
-  const data = validateUsage(await response.json());
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 12_000);
+  let response;
+  try {
+    response = await fetch(connection.endpoint, { headers, cache: "no-store", signal: controller.signal });
+  } catch (error) {
+    if (error.name === "AbortError") throw new Error("Usage API 응답 시간이 초과되었습니다.");
+    throw new Error("Usage API에 연결할 수 없습니다. 주소와 CORS 설정을 확인하세요.");
+  } finally {
+    window.clearTimeout(timeout);
+  }
+  if (!response.ok) throw new Error(response.status === 401 || response.status === 403 ? "인증이 만료되었거나 권한이 없습니다." : `Usage API 오류 (${response.status})`);
+  let payload;
+  try { payload = await response.json(); } catch { throw new Error("Usage API가 올바른 JSON을 반환하지 않았습니다."); }
+  const data = validateUsage(payload);
   usage.set(provider.id, data);
   return data;
 }
 
 async function refreshAll() {
+  if (refreshPromise) return refreshPromise;
+  refreshPromise = performRefresh();
+  try { return await refreshPromise; } finally { refreshPromise = null; }
+}
+
+async function performRefresh() {
   const connected = providers.filter(({ id }) => connections[id]);
   if (!connected.length) { renderProvider(); return; }
   elements.refresh.classList.add("loading"); elements.refresh.disabled = true;
   const results = await Promise.allSettled(connected.map((provider) => fetchUsage(provider, connections[provider.id])));
   const failures = results.filter(({ status }) => status === "rejected").length;
-  elements.updated.innerHTML = `<span class="status-dot ${failures ? "warning" : "live"}"></span>${failures ? `${failures}개 연결 확인 실패` : "방금 전 실제 데이터 업데이트"}`;
+  elements.updated.innerHTML = `<span class="status-dot ${failures ? "warning" : "live"}"></span>${failures ? `${failures}개 연결 확인 실패 · 다시 인증하거나 API를 확인하세요` : "방금 전 실제 데이터 업데이트"}`;
   elements.refresh.classList.remove("loading"); elements.refresh.disabled = false;
   renderProvider();
 }
@@ -112,7 +131,7 @@ elements.form.addEventListener("submit", async (event) => {
   event.preventDefault();
   const provider = providers[active];
   const endpoint = elements.endpoint.value.trim();
-  if (!endpoint.startsWith("https://") && !/^http:\/\/(localhost|127\.0\.0\.1)(:|\/)/.test(endpoint)) { elements.error.textContent = "보안을 위해 HTTPS 주소만 사용할 수 있습니다."; return; }
+  if (!isSecureEndpoint(endpoint, location.hostname)) { elements.error.textContent = "올바른 HTTPS 주소를 입력하세요. HTTP는 로컬 개발 환경에서만 허용됩니다."; return; }
   elements.submit.disabled = true; elements.submit.textContent = "확인 중…"; elements.error.textContent = "";
   try {
     const token = elements.token.value.trim();
