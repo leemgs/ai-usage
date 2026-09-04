@@ -1,4 +1,5 @@
-import { isSecureEndpoint, readConnections, usagePercent, validateUsage } from "./usage-core.js";
+import { isSecureEndpoint, overallPercent, readConnections, usagePercent, validateUsage } from "./usage-core.js";
+import { area, donut, miniRing } from "./charts.js";
 
 const providers = [
   { id: "claude", name: "Claude", short: "AI", color: "#d97757" },
@@ -9,7 +10,7 @@ const providers = [
 ];
 
 const storageKey = "aiUsageConnectionsV2";
-const connections = readConnections(localStorage.getItem(storageKey));
+const connections = readConnections(localStorage.getItem(storageKey), location.hostname);
 const tokens = new Map();
 const usage = new Map();
 let active = Math.max(0, providers.findIndex(({ id }) => id === (localStorage.getItem("activeProvider") || "copilot")));
@@ -17,7 +18,7 @@ let refreshPromise = null;
 
 const $ = (selector) => document.querySelector(selector);
 const elements = {
-  nav: $("#providerNav"), content: $("#providerContent"), name: $("#providerName"), logo: $("#providerLogo"),
+  nav: $("#providerNav"), content: $("#providerContent"), summary: $("#summaryStrip"), name: $("#providerName"), logo: $("#providerLogo"),
   status: $("#providerStatus"), count: $("#activeCount"), updated: $("#globalUpdated"), refresh: $("#refreshButton"),
   disconnect: $("#disconnectButton"), dialog: $("#connectDialog"), form: $("#connectForm"), title: $("#dialogTitle"),
   endpoint: $("#endpointInput"), token: $("#tokenInput"), error: $("#formError"), submit: $("#connectSubmit"), theme: $("#themeToggle")
@@ -53,14 +54,48 @@ function formatDate(value) {
   return Number.isNaN(date.getTime()) ? value : new Intl.DateTimeFormat("ko-KR", { dateStyle: "long", timeStyle: "short" }).format(date);
 }
 
-function usageState(data) {
+function usageState(data, provider) {
+  const overall = overallPercent(data.metrics);
   const metrics = data.metrics.map((metric) => {
     const percent = usagePercent(metric.used, metric.limit);
     const display = percent === null ? `${metric.used}` : `${metric.used} / ${metric.limit}`;
     return `<div class="metric"><div class="metric-labels"><span class="metric-name">${escapeHtml(metric.label)}</span><span class="metric-numbers"><strong>${escapeHtml(display)}</strong>${percent === null ? "회" : ` (${percent}%)`}</span></div>
       <div class="progress" role="progressbar" aria-label="${escapeHtml(metric.label)}" aria-valuemin="0" aria-valuemax="${metric.limit || metric.used}" aria-valuenow="${metric.used}"><div class="progress-fill" style="width:${percent ?? 100}%"></div></div></div>`;
   }).join("");
-  return `<div class="account-row"><div><span>계정</span><strong>${escapeHtml(data.account || "확인되지 않음")}</strong></div><div class="account-updated"><span>API 기준 시각</span><strong>${escapeHtml(formatDate(data.updatedAt))}</strong></div></div>${metrics}<div class="reset-note"><span aria-hidden="true">◷</span><div><small>다음 사용량 재설정</small><strong>${escapeHtml(formatDate(data.resetAt))}</strong></div></div>`;
+
+  // 도넛 게이지: 한도가 있는 지표가 있으면 전체 평균 사용률을 표시
+  const gauge = overall === null ? "" : `<div class="gauge-row">
+    <div class="gauge">${donut(overall, { color: provider.color })}</div>
+    <div class="gauge-side">
+      <p class="gauge-headline">전체 평균 사용률</p>
+      <p class="gauge-detail">${data.metrics.length}개 항목 · 다음 재설정 ${escapeHtml(formatDate(data.resetAt))}</p>
+    </div></div>`;
+
+  // 추이 차트: 엔드포인트가 history 를 제공할 때만 표시(예시 데이터를 지어내지 않음)
+  let trend = "";
+  if (Array.isArray(data.history) && data.history.length > 1) {
+    const values = data.history.map((point) => usagePercent(point.used, point.limit) ?? point.used);
+    trend = `<div class="trend"><div class="trend-head"><span>사용 추이 (${data.history.length}개 지점)</span><span>실시간</span></div>${area(values, { color: provider.color })}</div>`;
+  }
+
+  const account = `<div class="account-row"><div><span>계정</span><strong>${escapeHtml(data.account || "확인되지 않음")}</strong></div><div class="account-updated"><span>API 기준 시각</span><strong>${escapeHtml(formatDate(data.updatedAt))}</strong></div></div>`;
+  const reset = `<div class="reset-note"><span aria-hidden="true">◷</span><div><small>다음 사용량 재설정</small><strong>${escapeHtml(formatDate(data.resetAt))}</strong></div></div>`;
+  return `${account}${gauge}${metrics}${trend}${reset}`;
+}
+
+function renderSummary() {
+  elements.summary.innerHTML = providers.map((provider, index) => {
+    const data = usage.get(provider.id);
+    const overall = data ? overallPercent(data.metrics) : null;
+    const connected = Boolean(connections[provider.id]);
+    const valClass = overall === null ? "summary-val dim" : "summary-val";
+    const valText = overall === null ? (connected ? "확인 대기" : "미연결") : `${overall}%`;
+    return `<button class="summary-item ${index === active ? "active" : ""}" type="button" data-index="${index}">
+      <span class="summary-ring">${miniRing(overall ?? 0, provider.color)}</span>
+      <span class="summary-name">${escapeHtml(provider.name)}</span>
+      <span class="${valClass}">${valText}${data ? ' <i class="dot-live"></i>' : ""}</span>
+    </button>`;
+  }).join("");
 }
 
 function renderProvider() {
@@ -74,9 +109,10 @@ function renderProvider() {
   elements.disconnect.hidden = !connection;
   elements.status.textContent = connection ? (data ? "실제 데이터 확인됨" : "연결됨 · 확인 대기") : "계정 연결 필요";
   elements.status.className = connection ? (data ? "connected" : "pending") : "disconnected";
-  elements.content.innerHTML = data ? usageState(data) : emptyState(provider);
+  elements.content.innerHTML = data ? usageState(data, provider) : emptyState(provider);
   $("#openConnect")?.addEventListener("click", openDialog);
   renderNav();
+  renderSummary();
 }
 
 async function fetchUsage(provider, connection, token = tokens.get(provider.id)) {
@@ -144,7 +180,9 @@ elements.form.addEventListener("submit", async (event) => {
   finally { elements.submit.disabled = false; elements.submit.textContent = "연결 및 확인"; }
 });
 
-elements.nav.addEventListener("click", (event) => { const button = event.target.closest("button[data-index]"); if (!button) return; active = Number(button.dataset.index); localStorage.setItem("activeProvider", providers[active].id); renderProvider(); });
+function selectProvider(index) { active = Number(index); localStorage.setItem("activeProvider", providers[active].id); renderProvider(); }
+elements.nav.addEventListener("click", (event) => { const button = event.target.closest("button[data-index]"); if (!button) return; selectProvider(button.dataset.index); });
+elements.summary.addEventListener("click", (event) => { const button = event.target.closest("button[data-index]"); if (!button) return; selectProvider(button.dataset.index); });
 elements.refresh.addEventListener("click", refreshAll);
 elements.disconnect.addEventListener("click", () => { const provider = providers[active]; if (!confirm(`${provider.name} 연결을 해제할까요?`)) return; delete connections[provider.id]; tokens.delete(provider.id); usage.delete(provider.id); saveConnections(); renderProvider(); });
 

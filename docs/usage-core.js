@@ -12,12 +12,29 @@ export function validateUsage(payload) {
     if (payload[field] != null && Number.isNaN(Date.parse(payload[field]))) throw new Error(`${field} 값이 올바른 날짜가 아닙니다.`);
   });
 
+  if (payload.history != null) {
+    if (!Array.isArray(payload.history)) throw new Error("history 는 배열이어야 합니다.");
+    payload.history.forEach((point) => {
+      if (!point || !Number.isFinite(point.used) || point.used < 0) throw new Error("history 항목의 used 는 0 이상의 숫자여야 합니다.");
+      if (point.limit != null && (!Number.isFinite(point.limit) || point.limit <= 0)) throw new Error("history 항목의 limit 는 0보다 큰 숫자여야 합니다.");
+      if (point.date != null && Number.isNaN(Date.parse(point.date))) throw new Error("history 항목의 date 가 올바른 날짜가 아닙니다.");
+    });
+  }
+
   return payload;
 }
 
 export function usagePercent(used, limit) {
   if (!Number.isFinite(limit) || limit <= 0) return null;
   return Math.min(100, Math.max(0, Math.round((used / limit) * 100)));
+}
+
+// 한도가 있는 지표들의 평균 사용률(0~100). 한도가 하나도 없으면 null.
+export function overallPercent(metrics) {
+  if (!Array.isArray(metrics)) return null;
+  const percents = metrics.map((m) => usagePercent(m.used, m.limit)).filter((p) => p !== null);
+  if (!percents.length) return null;
+  return Math.round(percents.reduce((a, b) => a + b, 0) / percents.length);
 }
 
 export function isSecureEndpoint(value, pageHostname = "") {
@@ -30,11 +47,11 @@ export function isSecureEndpoint(value, pageHostname = "") {
   }
 }
 
-export function readConnections(serialized) {
+export function readConnections(serialized, pageHostname = "") {
   try {
     const parsed = JSON.parse(serialized || "{}");
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
-    return Object.fromEntries(Object.entries(parsed).filter(([, connection]) => connection && typeof connection.endpoint === "string" && isSecureEndpoint(connection.endpoint)));
+    return Object.fromEntries(Object.entries(parsed).filter(([, connection]) => connection && typeof connection.endpoint === "string" && isSecureEndpoint(connection.endpoint, pageHostname)));
   } catch {
     return {};
   }
