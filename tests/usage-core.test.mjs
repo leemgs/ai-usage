@@ -61,3 +61,16 @@ test("localhost 로컬 어댑터 연결은 localhost 페이지에서 유지된�
   assert.deepEqual(readConnections(stored, "localhost"), { claude: { endpoint: "http://localhost:8787/claude" } });
   assert.deepEqual(readConnections(stored, "leemgs.github.io"), {});
 });
+
+test("API 키 방식 연결은 안전한 프록시 주소와 자격 증명이 있을 때만 유지된다", () => {
+  const good = JSON.stringify({ claude: { mode: "key", proxyBase: "https://proxy.example.com", creds: { adminKey: "sk-ant-admin-x" } } });
+  assert.deepEqual(readConnections(good), { claude: { mode: "key", proxyBase: "https://proxy.example.com", creds: { adminKey: "sk-ant-admin-x" } } });
+  // 자격 증명이 비어 있으면 제외
+  assert.deepEqual(readConnections(JSON.stringify({ claude: { mode: "key", proxyBase: "https://proxy.example.com", creds: { adminKey: "" } } })), {});
+  // 안전하지 않은 프록시 주소는 제외
+  assert.deepEqual(readConnections(JSON.stringify({ claude: { mode: "key", proxyBase: "http://evil.example.com", creds: { adminKey: "x" } } })), {});
+  // localhost 프록시는 localhost 페이지에서 유지
+  const local = JSON.stringify({ codex: { mode: "key", proxyBase: "http://localhost:8787", creds: { apiKey: "sk-x" } } });
+  assert.deepEqual(readConnections(local, "localhost"), { codex: { mode: "key", proxyBase: "http://localhost:8787", creds: { apiKey: "sk-x" } } });
+  assert.deepEqual(readConnections(local, "leemgs.github.io"), {});
+});

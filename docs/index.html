@@ -51,11 +51,44 @@
 
     <dialog id="connectDialog" aria-labelledby="dialogTitle">
       <form id="connectForm" method="dialog">
-        <div class="dialog-head"><div><p class="eyebrow">실제 데이터 연결</p><h2 id="dialogTitle">Copilot 계정 연결</h2></div><button class="close-button" value="cancel" aria-label="닫기">×</button></div>
-        <div class="notice"><strong>왜 아이디/암호를 받지 않나요?</strong><p>서비스 암호를 제3자 앱에 입력하는 것은 안전하지 않습니다. 공급자 API 또는 사용자가 운영하는 어댑터 주소만 연결하세요.</p></div>
-        <label>Usage API 주소<input id="endpointInput" name="endpoint" type="url" inputmode="url" placeholder="https://usage.example.com/api/copilot" required /><small>HTTPS 주소가 아래 형식의 JSON을 반환해야 합니다.</small></label>
-        <label>읽기 전용 API 토큰 <span>(선택)</span><input id="tokenInput" name="token" type="password" autocomplete="off" placeholder="Bearer token" /><small>토큰은 이 브라우저 탭의 메모리에만 보관됩니다.</small></label>
-        <details><summary>응답 형식 보기</summary><pre>{
+        <div class="dialog-head">
+          <div class="dialog-title"><span class="dialog-logo" id="dialogLogo" aria-hidden="true">C</span><div><p class="eyebrow">실제 데이터 연결</p><h2 id="dialogTitle">Copilot 연결</h2></div></div>
+          <button class="close-button" value="cancel" aria-label="닫기">×</button>
+        </div>
+
+        <div class="mode-tabs" role="tablist">
+          <button type="button" class="mode-tab active" id="tabKey" role="tab" aria-selected="true">API 키로 연결</button>
+          <button type="button" class="mode-tab" id="tabEndpoint" role="tab" aria-selected="false">직접 어댑터 주소<span class="tab-sub">고급</span></button>
+        </div>
+
+        <!-- 방식 1: API 키 -->
+        <div id="keyPanel">
+          <div class="step">
+            <span class="step-no">1</span>
+            <div class="step-body">
+              <strong>프록시(어댑터) 실행 &amp; 주소 입력</strong>
+              <p><code>node server/proxy.js</code> 를 실행한 주소를 입력하세요. 브라우저는 보안 정책(CORS)상 공급자 API를 직접 부를 수 없어 이 프록시가 대신 호출합니다.</p>
+              <input id="proxyBaseInput" type="url" inputmode="url" placeholder="http://localhost:8787" />
+            </div>
+          </div>
+          <div class="step">
+            <span class="step-no">2</span>
+            <div class="step-body">
+              <strong>공식 API 키/토큰 입력</strong>
+              <p id="keyHelp"></p>
+              <div id="keyFields"></div>
+              <p class="unsupported" id="keyUnsupported" hidden></p>
+            </div>
+          </div>
+          <p class="secure-note">🔒 키는 이 브라우저(localStorage)와 위 프록시로만 전송됩니다. 외부 서버로 보내지 않습니다. 되도록 <strong>읽기 전용·최소 권한</strong> 키를 사용하세요.</p>
+        </div>
+
+        <!-- 방식 2: 직접 어댑터 주소 -->
+        <div id="endpointPanel" hidden>
+          <div class="notice"><strong>이미 Usage API 어댑터를 운영 중인가요?</strong><p>아래 형식의 JSON을 반환하는 HTTPS 주소를 직접 연결할 수 있습니다.</p></div>
+          <label>Usage API 주소<input id="endpointInput" name="endpoint" type="url" inputmode="url" placeholder="https://usage.example.com/api/copilot" /><small>HTTPS 주소가 아래 형식의 JSON을 반환해야 합니다.</small></label>
+          <label>읽기 전용 API 토큰 <span>(선택)</span><input id="tokenInput" name="token" type="password" autocomplete="off" placeholder="Bearer token" /><small>토큰은 이 브라우저 탭의 메모리에만 보관됩니다.</small></label>
+          <details><summary>응답 형식 보기</summary><pre>{
   "account": "my-account",
   "updatedAt": "2026-08-09T09:00:00Z",
   "resetAt": "2026-09-01T09:00:00+09:00",
@@ -66,6 +99,8 @@
     {"date": "2026-08-01", "used": 8, "limit": 300}
   ]
 }</pre></details>
+        </div>
+
         <p class="form-error" id="formError" role="alert"></p>
         <div class="dialog-actions"><button class="secondary-button" value="cancel">취소</button><button class="primary-button" id="connectSubmit" value="default">연결 및 확인</button></div>
       </form>

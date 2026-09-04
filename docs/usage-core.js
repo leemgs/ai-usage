@@ -51,7 +51,20 @@ export function readConnections(serialized, pageHostname = "") {
   try {
     const parsed = JSON.parse(serialized || "{}");
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
-    return Object.fromEntries(Object.entries(parsed).filter(([, connection]) => connection && typeof connection.endpoint === "string" && isSecureEndpoint(connection.endpoint, pageHostname)));
+    const out = {};
+    for (const [id, conn] of Object.entries(parsed)) {
+      if (!conn || typeof conn !== "object") continue;
+      if (conn.mode === "key") {
+        // API 키 방식: 프록시(어댑터) 주소가 안전하고 자격 증명이 있을 때만 유지
+        if (typeof conn.proxyBase === "string" && isSecureEndpoint(conn.proxyBase, pageHostname) && conn.creds && typeof conn.creds === "object" && Object.values(conn.creds).some((v) => v && String(v).trim())) {
+          out[id] = { mode: "key", proxyBase: conn.proxyBase, creds: conn.creds };
+        }
+      } else if (typeof conn.endpoint === "string" && isSecureEndpoint(conn.endpoint, pageHostname)) {
+        // 직접 어댑터 주소 방식 (기존 형식 유지)
+        out[id] = { endpoint: conn.endpoint };
+      }
+    }
+    return out;
   } catch {
     return {};
   }

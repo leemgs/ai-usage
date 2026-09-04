@@ -9,9 +9,50 @@ const providers = [
   { id: "copilot", name: "Copilot", short: "C", color: "#17191f" }
 ];
 
-const storageKey = "aiUsageConnectionsV2";
+// 공급자별 공식 API 키/토큰 안내와 입력 필드
+const providerMeta = {
+  claude: {
+    supported: true,
+    help: { text: "Anthropic Console → Settings → Admin keys 에서 Admin API 키를 발급하세요.", url: "https://console.anthropic.com/settings/admin-keys", label: "Anthropic Console 열기" },
+    fields: [
+      { key: "adminKey", label: "Admin API 키", type: "password", placeholder: "sk-ant-admin..." },
+      { key: "budget", label: "월 예산(USD, 선택)", type: "number", placeholder: "100" }
+    ]
+  },
+  gemini: {
+    supported: true,
+    help: { text: "Google AI Studio 에서 API 키를 발급하세요. (사용률 API가 없어 키 유효성만 확인합니다)", url: "https://aistudio.google.com/app/apikey", label: "Google AI Studio 열기" },
+    fields: [{ key: "apiKey", label: "Google API 키", type: "password", placeholder: "AIza..." }]
+  },
+  antigravity: {
+    supported: false,
+    help: { text: "Antigravity 는 공개 사용량 API가 없어 실시간 조회를 지원하지 않습니다.", url: "", label: "" },
+    fields: []
+  },
+  codex: {
+    supported: true,
+    help: { text: "OpenAI Platform → API keys 에서 키를 발급하세요. 비용/사용량 조회에는 조직 권한이 필요할 수 있습니다.", url: "https://platform.openai.com/api-keys", label: "OpenAI Platform 열기" },
+    fields: [
+      { key: "apiKey", label: "OpenAI API 키", type: "password", placeholder: "sk-..." },
+      { key: "orgId", label: "조직 ID(선택)", type: "text", placeholder: "org-..." },
+      { key: "budget", label: "월 예산(USD, 선택)", type: "number", placeholder: "100" }
+    ]
+  },
+  copilot: {
+    supported: true,
+    help: { text: "GitHub → Settings → Developer settings → Personal access tokens 에서 토큰을 발급하세요(읽기 전용 권장).", url: "https://github.com/settings/tokens", label: "GitHub 토큰 페이지 열기" },
+    fields: [
+      { key: "token", label: "GitHub 토큰(PAT)", type: "password", placeholder: "ghp_..." },
+      { key: "org", label: "조직 또는 사용자명", type: "text", placeholder: "my-org" }
+    ]
+  }
+};
+
+const storageKey = "aiUsageConnectionsV3";
+const proxyBaseKey = "aiUsageProxyBase";
 const connections = readConnections(localStorage.getItem(storageKey), location.hostname);
 const tokens = new Map();
+let dialogMode = "key"; // 'key' | 'endpoint'
 const usage = new Map();
 let active = Math.max(0, providers.findIndex(({ id }) => id === (localStorage.getItem("activeProvider") || "copilot")));
 let refreshPromise = null;
@@ -20,8 +61,10 @@ const $ = (selector) => document.querySelector(selector);
 const elements = {
   nav: $("#providerNav"), content: $("#providerContent"), summary: $("#summaryStrip"), name: $("#providerName"), logo: $("#providerLogo"),
   status: $("#providerStatus"), count: $("#activeCount"), updated: $("#globalUpdated"), refresh: $("#refreshButton"),
-  disconnect: $("#disconnectButton"), dialog: $("#connectDialog"), form: $("#connectForm"), title: $("#dialogTitle"),
-  endpoint: $("#endpointInput"), token: $("#tokenInput"), error: $("#formError"), submit: $("#connectSubmit"), theme: $("#themeToggle")
+  disconnect: $("#disconnectButton"), dialog: $("#connectDialog"), form: $("#connectForm"), title: $("#dialogTitle"), dialogLogo: $("#dialogLogo"),
+  endpoint: $("#endpointInput"), token: $("#tokenInput"), error: $("#formError"), submit: $("#connectSubmit"), theme: $("#themeToggle"),
+  tabKey: $("#tabKey"), tabEndpoint: $("#tabEndpoint"), keyPanel: $("#keyPanel"), endpointPanel: $("#endpointPanel"),
+  proxyBase: $("#proxyBaseInput"), keyHelp: $("#keyHelp"), keyFields: $("#keyFields"), keyUnsupported: $("#keyUnsupported")
 };
 
 function escapeHtml(value) {
@@ -40,11 +83,12 @@ function renderNav() {
 }
 
 function emptyState(provider) {
+  const supported = providerMeta[provider.id]?.supported !== false;
   return `<div class="empty-state">
-    <span class="empty-icon" aria-hidden="true">↗</span>
-    <h3>${provider.name} 계정을 연결하세요</h3>
-    <p>현재 표시할 실제 사용량이 없습니다.<br>Usage API를 연결한 뒤에만 데이터가 표시됩니다.</p>
-    <button class="primary-button" id="openConnect" type="button">계정 데이터 연결</button>
+    <span class="empty-icon" aria-hidden="true">🔑</span>
+    <h3>${provider.name} 연결하기</h3>
+    <p>공식 <strong>API 키/토큰</strong>을 입력하면 실제 사용량을<br>그래프로 확인할 수 있습니다.</p>
+    <button class="primary-button" id="openConnect" type="button" ${supported ? "" : "disabled"}>${supported ? "API 키로 연결" : "실시간 조회 미지원"}</button>
   </div>`;
 }
 
@@ -116,22 +160,36 @@ function renderProvider() {
 }
 
 async function fetchUsage(provider, connection, token = tokens.get(provider.id)) {
-  const headers = { Accept: "application/json" };
-  if (token) headers.Authorization = `Bearer ${token}`;
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), 12_000);
   let response;
   try {
-    response = await fetch(connection.endpoint, { headers, cache: "no-store", signal: controller.signal });
+    if (connection.mode === "key") {
+      // API 키 방식: 프록시(어댑터)에 키를 전달해 대신 호출하게 함
+      response = await fetch(connection.proxyBase.replace(/\/$/, "") + "/api/usage", {
+        method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store", signal: controller.signal,
+        body: JSON.stringify({ provider: provider.id, creds: connection.creds })
+      });
+    } else {
+      // 직접 어댑터 주소 방식
+      const headers = { Accept: "application/json" };
+      if (token) headers.Authorization = `Bearer ${token}`;
+      response = await fetch(connection.endpoint, { headers, cache: "no-store", signal: controller.signal });
+    }
   } catch (error) {
-    if (error.name === "AbortError") throw new Error("Usage API 응답 시간이 초과되었습니다.");
-    throw new Error("Usage API에 연결할 수 없습니다. 주소와 CORS 설정을 확인하세요.");
+    if (error.name === "AbortError") throw new Error("응답 시간이 초과되었습니다.");
+    throw new Error(connection.mode === "key" ? "프록시에 연결할 수 없습니다. server/proxy.js 실행과 주소를 확인하세요." : "Usage API에 연결할 수 없습니다. 주소와 CORS 설정을 확인하세요.");
   } finally {
     window.clearTimeout(timeout);
   }
-  if (!response.ok) throw new Error(response.status === 401 || response.status === 403 ? "인증이 만료되었거나 권한이 없습니다." : `Usage API 오류 (${response.status})`);
+  if (!response.ok) {
+    let detail = "";
+    try { detail = (await response.clone().json()).error || ""; } catch {}
+    if (response.status === 401 || response.status === 403) throw new Error("인증이 만료되었거나 권한이 없습니다.");
+    throw new Error(detail || `조회 오류 (${response.status})`);
+  }
   let payload;
-  try { payload = await response.json(); } catch { throw new Error("Usage API가 올바른 JSON을 반환하지 않았습니다."); }
+  try { payload = await response.json(); } catch { throw new Error("올바른 JSON을 반환하지 않았습니다."); }
   const data = validateUsage(payload);
   usage.set(provider.id, data);
   return data;
@@ -154,30 +212,91 @@ async function performRefresh() {
   renderProvider();
 }
 
+function setDialogMode(mode) {
+  dialogMode = mode;
+  const isKey = mode === "key";
+  elements.tabKey.classList.toggle("active", isKey);
+  elements.tabEndpoint.classList.toggle("active", !isKey);
+  elements.tabKey.setAttribute("aria-selected", String(isKey));
+  elements.tabEndpoint.setAttribute("aria-selected", String(!isKey));
+  elements.keyPanel.hidden = !isKey;
+  elements.endpointPanel.hidden = isKey;
+}
+
+function renderKeyFields(provider) {
+  const meta = providerMeta[provider.id];
+  const saved = connections[provider.id]?.mode === "key" ? connections[provider.id].creds : {};
+  const help = meta.help;
+  elements.keyHelp.innerHTML = `${escapeHtml(help.text)}${help.url ? ` <a href="${help.url}" target="_blank" rel="noopener">${escapeHtml(help.label)} ↗</a>` : ""}`;
+  if (!meta.supported) {
+    elements.keyFields.innerHTML = "";
+    elements.keyUnsupported.hidden = false;
+    elements.keyUnsupported.textContent = "이 서비스는 실시간 조회를 지원하지 않습니다.";
+    elements.submit.disabled = true;
+    return;
+  }
+  elements.keyUnsupported.hidden = true;
+  elements.submit.disabled = false;
+  elements.keyFields.innerHTML = meta.fields.map((field) => `
+    <label>${escapeHtml(field.label)}
+      <input data-field="${field.key}" type="${field.type}" autocomplete="off" spellcheck="false"
+        placeholder="${escapeHtml(field.placeholder)}" value="${escapeHtml(saved[field.key] || "")}" />
+    </label>`).join("");
+}
+
 function openDialog() {
   const provider = providers[active];
-  elements.title.textContent = `${provider.name} 계정 연결`;
-  elements.endpoint.value = connections[provider.id]?.endpoint || "";
-  elements.token.value = ""; elements.error.textContent = "";
+  const conn = connections[provider.id];
+  elements.title.textContent = `${provider.name} 연결`;
+  elements.dialogLogo.textContent = provider.short;
+  elements.dialogLogo.style.background = provider.color;
+  elements.error.textContent = "";
+  // 프록시 주소: 저장된 연결 → 마지막 사용값 → 기본값 순
+  elements.proxyBase.value = (conn?.mode === "key" && conn.proxyBase) || localStorage.getItem(proxyBaseKey) || "http://localhost:8787";
+  elements.endpoint.value = conn && conn.mode !== "key" ? conn.endpoint : "";
+  elements.token.value = "";
+  setDialogMode(conn && conn.mode !== "key" ? "endpoint" : "key");
+  renderKeyFields(provider);
   elements.dialog.showModal();
 }
+
+elements.tabKey.addEventListener("click", () => { setDialogMode("key"); renderKeyFields(providers[active]); elements.error.textContent = ""; });
+elements.tabEndpoint.addEventListener("click", () => { setDialogMode("endpoint"); elements.submit.disabled = false; elements.error.textContent = ""; });
 
 elements.form.addEventListener("submit", async (event) => {
   if (event.submitter?.value === "cancel") return;
   event.preventDefault();
   const provider = providers[active];
-  const endpoint = elements.endpoint.value.trim();
-  if (!isSecureEndpoint(endpoint, location.hostname)) { elements.error.textContent = "올바른 HTTPS 주소를 입력하세요. HTTP는 로컬 개발 환경에서만 허용됩니다."; return; }
   elements.submit.disabled = true; elements.submit.textContent = "확인 중…"; elements.error.textContent = "";
   try {
-    const token = elements.token.value.trim();
-    await fetchUsage(provider, { endpoint }, token);
-    connections[provider.id] = { endpoint };
-    if (token) tokens.set(provider.id, token);
-    saveConnections(); elements.dialog.close();
-    elements.updated.innerHTML = '<span class="status-dot live"></span>방금 전 실제 데이터 업데이트'; renderProvider();
-  } catch (error) { elements.error.textContent = `연결하지 못했습니다: ${error.message}`; }
-  finally { elements.submit.disabled = false; elements.submit.textContent = "연결 및 확인"; }
+    let connection;
+    if (dialogMode === "key") {
+      const proxyBase = elements.proxyBase.value.trim();
+      if (!isSecureEndpoint(proxyBase, location.hostname)) throw new Error("올바른 프록시 주소를 입력하세요. HTTP는 localhost 에서만 허용됩니다.");
+      const creds = {};
+      elements.keyFields.querySelectorAll("input[data-field]").forEach((input) => { creds[input.dataset.field] = input.value.trim(); });
+      if (!Object.values(creds).some((v) => v)) throw new Error("API 키/토큰을 입력하세요.");
+      connection = { mode: "key", proxyBase, creds };
+      await fetchUsage(provider, connection);
+      localStorage.setItem(proxyBaseKey, proxyBase);
+    } else {
+      const endpoint = elements.endpoint.value.trim();
+      if (!isSecureEndpoint(endpoint, location.hostname)) throw new Error("올바른 HTTPS 주소를 입력하세요. HTTP는 로컬 개발 환경에서만 허용됩니다.");
+      const token = elements.token.value.trim();
+      connection = { endpoint };
+      await fetchUsage(provider, connection, token);
+      if (token) tokens.set(provider.id, token);
+    }
+    connections[provider.id] = connection;
+    saveConnections();
+    elements.dialog.close();
+    elements.updated.innerHTML = '<span class="status-dot live"></span>방금 전 실제 데이터 업데이트';
+    renderProvider();
+  } catch (error) {
+    elements.error.textContent = `연결하지 못했습니다: ${error.message}`;
+  } finally {
+    elements.submit.disabled = false; elements.submit.textContent = "연결 및 확인";
+  }
 });
 
 function selectProvider(index) { active = Number(index); localStorage.setItem("activeProvider", providers[active].id); renderProvider(); }

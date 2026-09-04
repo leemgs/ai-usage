@@ -36,14 +36,32 @@ python3 -m http.server 4173 --directory docs
 
 ## 실제 계정 연결
 
-AI Usage는 사용자의 AI 서비스 아이디나 암호를 수집하지 않습니다. 각 서비스의 개인 구독 사용량 API 제공 여부와 인증 방식이 서로 다르므로, 공급자가 제공하는 API 또는 사용자가 운영하는 읽기 전용 어댑터를 연결합니다.
+AI Usage는 AI 서비스 아이디/암호를 수집하지 않습니다. 각 공급자의 **공식 API 키/토큰**으로 사용량을 조회합니다. 연결 방법은 두 가지입니다.
 
-1. 상단(모바일) 또는 사이드바(데스크톱)에서 서비스를 선택합니다.
-2. **계정 데이터 연결**을 누릅니다.
-3. HTTPS Usage API 주소와 필요한 경우 읽기 전용 토큰을 입력합니다.
-4. 응답을 검증하고 성공한 경우에만 해당 서비스를 연결됨으로 표시합니다.
+### 방법 A — API 키로 연결 (권장, 쉬움)
 
-Usage API는 다음 JSON 형식을 반환해야 하며, 브라우저 접근을 허용하는 CORS 헤더가 필요합니다.
+1. 프록시(어댑터)를 실행합니다. `node server/proxy.js` (기본 `http://localhost:8787`)
+2. 상단(모바일)/사이드바(데스크톱)에서 서비스를 선택하고 **API 키로 연결**을 누릅니다.
+3. 연결 창에서
+   - **1단계**: 위 프록시 주소를 입력합니다.
+   - **2단계**: 각 공급자의 공식 API 키/토큰을 붙여넣습니다. 창에 발급 페이지 바로가기 링크가 있습니다.
+4. **연결 및 확인**을 누르면 프록시가 실제 API를 호출해 사용량을 그래프로 표시합니다.
+
+키는 이 브라우저(`localStorage`)와 위 프록시로만 전송되며 외부로 나가지 않습니다. 되도록 **읽기 전용·최소 권한** 키를 사용하세요.
+
+| 서비스 | 입력하는 키 | 발급 위치 |
+| --- | --- | --- |
+| Claude | Anthropic **Admin API 키** (`sk-ant-admin...`) + 월 예산(선택) | console.anthropic.com → Settings → Admin keys |
+| Codex | OpenAI **API 키** (`sk-...`) + 조직 ID(선택) + 월 예산(선택) | platform.openai.com → API keys |
+| Copilot | GitHub **토큰(PAT)** + 조직/사용자명 | github.com → Settings → Developer settings → Tokens |
+| Gemini | Google **API 키** (`AIza...`) | aistudio.google.com → API keys (사용률 API 미제공, 키 확인만) |
+| Antigravity | — | 공개 사용량 API 없음 (미지원) |
+
+> 소비자 서비스(claude.ai · chatgpt.com · gemini)는 **아이디/비밀번호로 사용량을 조회하는 공개 API가 없습니다.** 그래서 계정 비밀번호가 아니라 위의 API 키/토큰을 사용합니다.
+
+### 방법 B — 직접 어댑터 주소 (고급)
+
+이미 Usage API 어댑터를 운영 중이라면, 연결 창의 **직접 어댑터 주소** 탭에서 아래 JSON을 반환하는 HTTPS 주소를 바로 연결할 수 있습니다. 응답은 브라우저 접근을 허용하는 CORS 헤더가 필요합니다.
 
 ```json
 {
@@ -61,28 +79,31 @@ Usage API는 다음 JSON 형식을 반환해야 하며, 브라우저 접근을 �
 
 `limit`를 제공하지 않는 항목은 횟수만 표시합니다. `history`(선택)를 제공하면 사용 추이 그래프가 표시되며, 없으면 그래프는 표시되지 않습니다(임의로 지어내지 않습니다). 브라우저를 닫으면 토큰은 사라지므로 다음 접속 때 토큰이 필요한 연결은 다시 인증해야 합니다.
 
-### 로컬 어댑터 예제(server/proxy.js)
+### 프록시(server/proxy.js) 동작 방식
 
-각 공급자의 실제 API를 호출해 위 형식으로 정규화하는 **동작하는 어댑터 예제**가 포함되어 있습니다. 공급자 API 키를 환경 변수로 주입하면 브라우저 대신 호출합니다(브라우저는 CORS 때문에 공급자 API를 직접 호출할 수 없습니다).
+각 공급자의 실제 API를 호출해 위 형식으로 정규화하는 **동작하는 어댑터**입니다. 외부 의존성 없이 Node 18+ 로 실행되며, 두 가지 경로를 제공합니다.
+
+- `POST /api/usage` — **방법 A**가 사용. 브라우저가 입력한 키를 `{ provider, creds }` 로 보내면 프록시가 대신 호출합니다.
+- `GET /claude` 등 — 키를 환경 변수로 미리 주입해두고 **방법 B**로 URL만 연결하는 방식.
 
 ```bash
+# 방법 A: 키 없이 실행 (키는 대시보드 UI에서 입력)
+node server/proxy.js          # 기본 http://localhost:8787
+
+# 방법 B: 환경 변수로 키를 주입하고 GET /claude 등을 직접 연결
 ANTHROPIC_ADMIN_KEY=sk-ant-admin... ANTHROPIC_BUDGET=100 \
 OPENAI_API_KEY=sk-... OPENAI_BUDGET=100 \
 GITHUB_TOKEN=ghp_... GITHUB_ORG=my-org \
 GEMINI_API_KEY=AIza... \
-node server/proxy.js          # 기본 http://localhost:8787
+node server/proxy.js
 ```
 
-설정 대화상자의 "Usage API 주소"에 아래처럼 입력합니다.
-
-| 서비스 | 주소 | 조회 내용 |
-| --- | --- | --- |
-| Claude | `http://localhost:8787/claude` | 이번 달 비용/예산(일별 추이 포함) |
-| Codex | `http://localhost:8787/codex` | 이번 달 비용/예산(일별 추이 포함) |
-| Copilot | `http://localhost:8787/copilot` | 활성/비활성 좌석 |
-| Gemini | `http://localhost:8787/gemini` | 키 유효성(공개 사용률 API 미제공) |
-
-> 소비자 서비스(claude.ai · chatgpt.com · gemini)는 **아이디/비밀번호로 사용량을 조회하는 공개 API가 없습니다.** 이 어댑터도 계정 비밀번호가 아니라 각 공급자의 API 키/토큰을 사용합니다.
+| 서비스 | 조회 내용 |
+| --- | --- |
+| Claude | 이번 달 비용/예산(일별 추이 포함) |
+| Codex | 이번 달 비용/예산(일별 추이 포함) |
+| Copilot | 활성/비활성 좌석 |
+| Gemini | 키 유효성(공개 사용률 API 미제공) |
 
 자동 갱신은 화면이 보이는 동안 60초마다 실행됩니다. 이는 Usage API가 반환하는 최신 데이터를 다시 가져오는 방식이며, 공급자의 사용량 반영 지연보다 빠르게 갱신되거나 스트리밍 방식으로 전달되는 것은 아닙니다.
 
